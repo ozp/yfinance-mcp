@@ -1,0 +1,17 @@
+# MCP Yahoo Finance Server - Requirements
+# Session 3: Service Layer Part 1
+
+# Core dependencies
+yfinance>=0.2.62
+pandas>=2.0.0
+pydantic>=2.0.0
+requests>=2.31.0
+
+# MCP Protocol (for full server - Session 5)
+mcp>=1.6.0
+
+# Development dependencies (optional)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+mypy>=1.0.0
+ruff>=0.1.0
