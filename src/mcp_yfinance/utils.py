@@ -7,14 +7,14 @@ markets, formatting data, generating cache keys, and creating MCP tool schemas.
 import hashlib
 import inspect
 import re
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 
-
 # Market suffix configuration for ticker normalization
 # This dictionary maps market codes to their Yahoo Finance suffixes
-MARKET_SUFFIXES: Dict[str, str] = {
+MARKET_SUFFIXES: dict[str, str] = {
     "US": "",  # United States - no suffix
     "BR": ".SA",  # Brazil - São Paulo Stock Exchange
     "UK": ".L",  # United Kingdom - London Stock Exchange
@@ -128,7 +128,7 @@ def generate_cache_key(tool_name: str, **kwargs: Any) -> str:
     return f"{tool_name}:{params_hash}"
 
 
-def parse_docstring(docstring: str) -> Dict[str, str]:
+def parse_docstring(docstring: str) -> dict[str, str]:
     """Extract parameter descriptions from a function's docstring.
 
     Parses Google-style docstrings to extract parameter names and
@@ -173,7 +173,7 @@ def parse_docstring(docstring: str) -> Dict[str, str]:
     return param_descriptions
 
 
-def generate_tool_schema(func: Callable) -> Dict[str, Any]:
+def generate_tool_schema(func: Callable) -> dict[str, Any]:
     """Auto-generate MCP Tool schema from a function.
 
     Inspects a function's signature and docstring to automatically
@@ -230,7 +230,7 @@ def generate_tool_schema(func: Callable) -> Dict[str, Any]:
                 param_type = "number"
 
         # Build parameter schema
-        param_schema: Dict[str, Any] = {"type": param_type}
+        param_schema: dict[str, Any] = {"type": param_type}
 
         # Add description if available
         if param_name in param_descriptions:

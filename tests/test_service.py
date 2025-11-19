@@ -6,18 +6,16 @@ This script tests the 10 methods implemented in Session 3:
 - Financial Statements (3 methods)
 """
 
-import sys
 import os
+import sys
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.mcp_yfinance.service import YahooFinanceService
 from src.mcp_yfinance.exceptions import (
     TickerNotFoundError,
-    DataNotAvailableError,
-    YFinanceAPIError,
 )
+from src.mcp_yfinance.service import YahooFinanceService
 
 
 def test_pricing_methods():
@@ -147,7 +145,7 @@ def test_market_normalization():
     print("\nTesting US market (AAPL)...")
     service_us = YahooFinanceService(default_market="US")
     try:
-        result = service_us.get_current_stock_price("AAPL")
+        service_us.get_current_stock_price("AAPL")
         print("✓ US market works!")
     except Exception as e:
         print(f"✗ Failed: {e}")
@@ -156,7 +154,7 @@ def test_market_normalization():
     print("\nTesting BR market (PETR4 -> PETR4.SA)...")
     service_br = YahooFinanceService(default_market="BR")
     try:
-        result = service_br.get_current_stock_price("PETR4")
+        service_br.get_current_stock_price("PETR4")
         print("✓ BR market works!")
     except Exception as e:
         print(f"✗ Failed: {e}")
@@ -173,7 +171,7 @@ def test_error_handling():
     # Test invalid ticker
     print("\nTesting invalid ticker (INVALID_TICKER_XYZ)...")
     try:
-        result = service.get_current_stock_price("INVALID_TICKER_XYZ")
+        service.get_current_stock_price("INVALID_TICKER_XYZ")
         print("✗ Should have raised TickerNotFoundError")
     except TickerNotFoundError as e:
         print(f"✓ Correctly raised TickerNotFoundError: {e}")

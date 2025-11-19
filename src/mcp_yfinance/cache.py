@@ -9,8 +9,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # Cache TTL configurations (in seconds)
 CACHE_TTL = {
@@ -46,7 +45,7 @@ class CacheManager:
         _conn: SQLite database connection.
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         """Initialize the cache manager.
 
         Args:
@@ -60,7 +59,7 @@ class CacheManager:
 
         self.db_path = db_path
         self._lock = threading.Lock()
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._init_database()
 
     def _init_database(self) -> None:
@@ -101,7 +100,7 @@ class CacheManager:
             )
         return self._conn
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Retrieve a value from cache if it exists and hasn't expired.
 
         Automatically cleans up expired entries during retrieval.
@@ -136,7 +135,7 @@ class CacheManager:
                 return json.loads(result[0])
             return None
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Store a value in cache with TTL.
 
         Args:
@@ -220,7 +219,7 @@ class CacheManager:
 
             return deleted_count
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics.
 
         Returns:
