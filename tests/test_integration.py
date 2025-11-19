@@ -8,7 +8,6 @@ This module tests the integration of all components:
 - Multi-market support
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -22,21 +21,21 @@ def test_imports():
 
     try:
         # Import modules directly, not through __init__ to avoid server dependencies
-        from mcp_yfinance import models, exceptions, cache, utils, service
+        from mcp_yfinance import cache, exceptions, models, service, utils
         print("✓ All core modules imported")
 
         # Test specific imports
-        from mcp_yfinance.models import PeriodType, IntervalType, FrequencyType
+        from mcp_yfinance.cache import CACHE_TTL, CacheManager
         from mcp_yfinance.exceptions import (
-            YFinanceMCPError,
+            DataNotAvailableError,
+            InvalidParameterError,
             TickerNotFoundError,
             YFinanceAPIError,
-            InvalidParameterError,
-            DataNotAvailableError,
+            YFinanceMCPError,
         )
-        from mcp_yfinance.cache import CacheManager, CACHE_TTL
-        from mcp_yfinance.utils import normalize_ticker, MARKET_SUFFIXES
+        from mcp_yfinance.models import FrequencyType, IntervalType, PeriodType
         from mcp_yfinance.service import YahooFinanceService
+        from mcp_yfinance.utils import MARKET_SUFFIXES, normalize_ticker
 
         print("✓ All specific imports successful")
         return True
@@ -94,9 +93,10 @@ def test_cache_operations():
     """Test cache set/get/expire operations."""
     print("\nTesting cache operations...")
 
-    from mcp_yfinance.cache import CacheManager
     import tempfile
     import time
+
+    from mcp_yfinance.cache import CacheManager
 
     # Create temporary cache
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -223,7 +223,7 @@ def test_service_methods():
         print(f"✗ Missing methods: {missing}")
         return False
 
-    print(f"✓ All 18 methods implemented")
+    print("✓ All 18 methods implemented")
     return True
 
 
@@ -232,11 +232,11 @@ def test_exceptions_hierarchy():
     print("\nTesting exception hierarchy...")
 
     from mcp_yfinance.exceptions import (
-        YFinanceMCPError,
+        DataNotAvailableError,
+        InvalidParameterError,
         TickerNotFoundError,
         YFinanceAPIError,
-        InvalidParameterError,
-        DataNotAvailableError,
+        YFinanceMCPError,
     )
 
     # Test base exception
@@ -286,7 +286,7 @@ def test_type_models():
     """Test Pydantic models and type literals."""
     print("\nTesting type models...")
 
-    from mcp_yfinance.models import PeriodType, IntervalType, FrequencyType
+    from mcp_yfinance.models import FrequencyType, IntervalType, PeriodType
 
     # These are TypedDict or Literal types, just verify they exist
     print(f"✓ PeriodType: {PeriodType}")
@@ -348,8 +348,7 @@ def test_pyproject_toml():
             data = tomli.load(f)
     except ImportError:
         # tomli not available, use basic parsing
-        import re
-        with open(pyproject_path, "r") as f:
+        with open(pyproject_path) as f:
             content = f.read()
 
         required_deps = ["mcp", "yfinance", "pydantic", "pandas", "requests"]

@@ -6,7 +6,6 @@ functionality and returns JSON-formatted data suitable for MCP tools.
 
 import json
 from datetime import datetime
-from typing import Optional
 
 import pandas as pd
 import yfinance as yf
@@ -43,7 +42,7 @@ class YahooFinanceService:
 
     def __init__(
         self,
-        session: Optional[Session] = None,
+        session: Session | None = None,
         verify: bool = True,
         default_market: str = "US",
     ) -> None:
@@ -82,7 +81,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, TickerNotFoundError):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     # ========== PRICING & HISTORICAL DATA (Methods 1-6) ==========
 
@@ -119,7 +118,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_stock_price_by_date(self, symbol: str, date: str) -> str:
         """Get the stock price for a specific date.
@@ -165,11 +164,11 @@ class YahooFinanceService:
 
             return json.dumps(result, indent=2)
         except ValueError as e:
-            raise InvalidParameterError("date", date, ["YYYY-MM-DD format"])
+            raise InvalidParameterError("date", date, ["YYYY-MM-DD format"]) from e
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_stock_price_date_range(self, symbol: str, start_date: str, end_date: str) -> str:
         """Get stock prices for a date range.
@@ -227,11 +226,11 @@ class YahooFinanceService:
 
             return json.dumps(result, indent=2)
         except ValueError as e:
-            raise InvalidParameterError("date", f"{start_date} or {end_date}", ["YYYY-MM-DD format"])
+            raise InvalidParameterError("date", f"{start_date} or {end_date}", ["YYYY-MM-DD format"]) from e
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_historical_stock_prices(
         self, symbol: str, period: PeriodType = "1mo", interval: IntervalType = "1d"
@@ -288,7 +287,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_dividends(self, symbol: str) -> str:
         """Get dividend history for a stock.
@@ -317,7 +316,7 @@ class YahooFinanceService:
             dividends_df = format_dataframe_dates(dividends_df)
 
             # Convert to list of records
-            data = [{"date": str(date), "amount": float(amount)} for date, amount in dividends_df.iterrows()]
+            data = [{"date": str(date), "amount": float(row["amount"])} for date, row in dividends_df.iterrows()]
 
             result = {
                 "symbol": symbol,
@@ -328,7 +327,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_stock_actions(self, symbol: str) -> str:
         """Get stock actions (splits and dividends) history.
@@ -374,7 +373,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     # ========== COMPANY INFO (Method 7) ==========
 
@@ -406,7 +405,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, TickerNotFoundError):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     # ========== FINANCIAL STATEMENTS (Methods 8-10) ==========
 
@@ -453,7 +452,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_balance_sheet(self, symbol: str, freq: FrequencyType = "yearly") -> str:
         """Get balance sheet for a stock.
@@ -498,7 +497,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_cashflow(self, symbol: str, freq: FrequencyType = "yearly") -> str:
         """Get cash flow statement for a stock.
@@ -543,7 +542,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     # ========== HOLDERS & OWNERSHIP (Method 11) ==========
 
@@ -621,7 +620,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     # ========== OPTIONS (Methods 12-13) ==========
 
@@ -656,7 +655,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_option_chain(
         self, symbol: str, expiration_date: str, option_type: OptionChainType = "both"
@@ -714,7 +713,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     # ========== NEWS & ANALYSIS (Methods 14-16) ==========
 
@@ -772,7 +771,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_recommendations(
         self,
@@ -833,7 +832,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_earning_dates(self, symbol: str, limit: int = 12) -> str:
         """Get upcoming and historical earnings dates for a stock.
@@ -878,7 +877,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     # ========== BONUS TOOLS (Methods 17-18) ==========
 
@@ -909,7 +908,7 @@ class YahooFinanceService:
             splits_df = format_dataframe_dates(splits_df)
 
             # Convert to list of records
-            data = [{"date": str(date), "split_ratio": float(ratio)} for date, ratio in splits_df.iterrows()]
+            data = [{"date": str(date), "split_ratio": float(row["split_ratio"])} for date, row in splits_df.iterrows()]
 
             result = {
                 "symbol": symbol,
@@ -920,7 +919,7 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
 
     def get_analyst_price_targets(self, symbol: str) -> str:
         """Get analyst price targets and recommendations summary.
@@ -966,4 +965,4 @@ class YahooFinanceService:
         except Exception as e:
             if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
                 raise
-            raise YFinanceAPIError(str(e), symbol)
+            raise YFinanceAPIError(str(e), symbol) from e
