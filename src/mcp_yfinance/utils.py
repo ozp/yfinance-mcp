@@ -7,7 +7,9 @@ markets, formatting data, generating cache keys, and creating MCP tool schemas.
 import hashlib
 import inspect
 import re
+import typing
 from collections.abc import Callable
+from enum import Enum
 from typing import Any
 
 import pandas as pd
@@ -218,11 +220,26 @@ def generate_tool_schema(func: Callable) -> dict[str, Any]:
         if param_name == "self":
             continue
 
-        # Determine parameter type
+        # Determine parameter type and enum values
         param_type = "string"  # Default to string
+        enum_values = []  # List of valid values for Literal/Enum types
+
         if param.annotation != inspect.Parameter.empty:
-            annotation_str = str(param.annotation)
-            if "int" in annotation_str.lower():
+            annotation = param.annotation
+            annotation_str = str(annotation)
+
+            # Check for Literal types (e.g., Literal["1d", "5d", "1mo"])
+            if typing.get_origin(annotation) is typing.Literal:
+                enum_values = list(typing.get_args(annotation))
+                param_type = "string"
+
+            # Check for Enum types (e.g., Period, Interval)
+            elif inspect.isclass(annotation) and issubclass(annotation, Enum):
+                enum_values = [e.value for e in annotation]
+                param_type = "string"
+
+            # Check for basic types
+            elif "int" in annotation_str.lower():
                 param_type = "integer"
             elif "bool" in annotation_str.lower():
                 param_type = "boolean"
@@ -231,6 +248,10 @@ def generate_tool_schema(func: Callable) -> dict[str, Any]:
 
         # Build parameter schema
         param_schema: dict[str, Any] = {"type": param_type}
+
+        # Add enum values if available (crucial for LLM to know valid inputs)
+        if enum_values:
+            param_schema["enum"] = enum_values
 
         # Add description if available
         if param_name in param_descriptions:
