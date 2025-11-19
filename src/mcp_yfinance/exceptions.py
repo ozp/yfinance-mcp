@@ -1,86 +1,142 @@
 """Custom exceptions for MCP Yahoo Finance.
 
-This module defines the exception hierarchy used throughout the application
-for handling various error conditions.
+This module defines the exception hierarchy for error handling
+throughout the MCP Yahoo Finance server.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 
 class YFinanceMCPError(Exception):
-    """Base exception for all MCP Yahoo Finance errors."""
+    """Base exception for all MCP Yahoo Finance errors.
+
+    This is the parent class for all custom exceptions in the
+    MCP Yahoo Finance server.
+
+    Attributes:
+        message: Error message describing what went wrong
+    """
 
     def __init__(self, message: str) -> None:
         """Initialize the base exception.
 
         Args:
-            message: Error message describing the issue.
+            message: Error message
         """
         self.message = message
         super().__init__(self.message)
 
 
 class TickerNotFoundError(YFinanceMCPError):
-    """Raised when a ticker symbol is not found or invalid."""
+    """Exception raised when a ticker symbol is not found.
+
+    This error indicates that the requested ticker symbol does not exist
+    or is not available in Yahoo Finance.
+
+    Attributes:
+        ticker: The ticker symbol that was not found
+        message: Error message
+    """
 
     def __init__(self, ticker: str) -> None:
         """Initialize the ticker not found exception.
 
         Args:
-            ticker: The ticker symbol that was not found.
+            ticker: The ticker symbol that was not found
         """
         self.ticker = ticker
-        super().__init__(f"Ticker '{ticker}' not found or invalid")
+        message = f"Ticker '{ticker}' not found or unavailable"
+        super().__init__(message)
 
 
 class YFinanceAPIError(YFinanceMCPError):
-    """Raised when the Yahoo Finance API returns an error."""
+    """Exception raised when Yahoo Finance API returns an error.
 
-    def __init__(self, message: str, ticker: Optional[str] = None) -> None:
+    This error indicates that the Yahoo Finance API request failed,
+    either due to network issues, API limitations, or invalid requests.
+
+    Attributes:
+        ticker: Optional ticker symbol related to the error
+        message: Error message
+    """
+
+    def __init__(self, message: str, ticker: str | None = None) -> None:
         """Initialize the API error exception.
 
         Args:
-            message: Error message from the API.
-            ticker: Optional ticker symbol related to the error.
+            message: Error message describing the API failure
+            ticker: Optional ticker symbol related to the error
         """
         self.ticker = ticker
-        error_msg = f"Yahoo Finance API error: {message}"
         if ticker:
-            error_msg += f" (ticker: {ticker})"
-        super().__init__(error_msg)
+            full_message = f"Yahoo Finance API error for '{ticker}': {message}"
+        else:
+            full_message = f"Yahoo Finance API error: {message}"
+        super().__init__(full_message)
 
 
 class InvalidParameterError(YFinanceMCPError):
-    """Raised when an invalid parameter is provided."""
+    """Exception raised when an invalid parameter is provided.
 
-    def __init__(self, param: str, value: Any, valid_values: Optional[list[Any]] = None) -> None:
+    This error indicates that a function parameter has an invalid value
+    that is not within the accepted range or set of values.
+
+    Attributes:
+        param: Parameter name
+        value: The invalid value that was provided
+        valid_values: List of valid values for this parameter
+        message: Error message
+    """
+
+    def __init__(
+        self,
+        param: str,
+        value: Any,
+        valid_values: list[Any] | None = None,
+    ) -> None:
         """Initialize the invalid parameter exception.
 
         Args:
-            param: Name of the invalid parameter.
-            value: The invalid value provided.
-            valid_values: Optional list of valid values for the parameter.
+            param: Name of the invalid parameter
+            value: The invalid value that was provided
+            valid_values: Optional list of valid values
         """
         self.param = param
         self.value = value
         self.valid_values = valid_values
 
-        error_msg = f"Invalid value '{value}' for parameter '{param}'"
         if valid_values:
-            error_msg += f". Valid values: {', '.join(map(str, valid_values))}"
-        super().__init__(error_msg)
+            valid_str = ", ".join(str(v) for v in valid_values)
+            message = (
+                f"Invalid value '{value}' for parameter '{param}'. "
+                f"Valid values are: {valid_str}"
+            )
+        else:
+            message = f"Invalid value '{value}' for parameter '{param}'"
+
+        super().__init__(message)
 
 
 class DataNotAvailableError(YFinanceMCPError):
-    """Raised when requested data is not available for a ticker."""
+    """Exception raised when requested data is not available.
+
+    This error indicates that the requested data type exists but is not
+    available for the specified ticker symbol.
+
+    Attributes:
+        data_type: Type of data that was requested
+        ticker: Ticker symbol for which data is unavailable
+        message: Error message
+    """
 
     def __init__(self, data_type: str, ticker: str) -> None:
         """Initialize the data not available exception.
 
         Args:
-            data_type: Type of data that is not available.
-            ticker: Ticker symbol for which data is not available.
+            data_type: Type of data that was requested (e.g., 'dividends', 'options')
+            ticker: Ticker symbol for which data is unavailable
         """
         self.data_type = data_type
         self.ticker = ticker
-        super().__init__(f"{data_type} data not available for ticker '{ticker}'")
+        message = f"Data type '{data_type}' not available for ticker '{ticker}'"
+        super().__init__(message)

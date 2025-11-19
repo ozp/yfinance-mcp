@@ -1,44 +1,53 @@
-"""Utility functions for MCP Yahoo Finance.
+"""Utility functions for ticker normalization, caching, and schema generation.
 
-This module provides helper functions for ticker normalization, data formatting,
-and other common operations.
+This module provides utilities for normalizing stock tickers across different
+markets, formatting data, generating cache keys, and creating MCP tool schemas.
 """
 
 import hashlib
-import json
-from typing import Any, Callable
+import inspect
+import re
+from typing import Any, Callable, Dict, Optional
 
 import pandas as pd
 
 
 # Market suffix configuration for ticker normalization
-MARKET_SUFFIXES = {
-    "US": "",
-    "BR": ".SA",
-    "UK": ".L",
-    "DE": ".DE",
-    "FR": ".PA",
-    "JP": ".T",
-    "IN_NSE": ".NS",  # National Stock Exchange
-    "IN_BSE": ".BO",  # Bombay Stock Exchange
-    "HK": ".HK",
-    "AU": ".AX",
-    "CA": ".TO",
+# This dictionary maps market codes to their Yahoo Finance suffixes
+MARKET_SUFFIXES: Dict[str, str] = {
+    "US": "",  # United States - no suffix
+    "BR": ".SA",  # Brazil - São Paulo Stock Exchange
+    "UK": ".L",  # United Kingdom - London Stock Exchange
+    "DE": ".DE",  # Germany - Deutsche Börse
+    "FR": ".PA",  # France - Euronext Paris
+    "JP": ".T",  # Japan - Tokyo Stock Exchange
+    "IN_NSE": ".NS",  # India - National Stock Exchange
+    "IN_BSE": ".BO",  # India - Bombay Stock Exchange
+    "HK": ".HK",  # Hong Kong Stock Exchange
+    "AU": ".AX",  # Australia - Australian Securities Exchange
+    "CA": ".TO",  # Canada - Toronto Stock Exchange
+    # Add more markets as needed - extensible design
 }
 
 
 def normalize_ticker(ticker: str, market: str = "US") -> str:
-    """Normalize ticker symbol for the specified market.
+    """Normalize a stock ticker symbol for a specific market.
 
-    Adds the appropriate market suffix to the ticker symbol if not already present.
-    This ensures compatibility with Yahoo Finance's ticker naming conventions.
+    Adds the appropriate market suffix to the ticker symbol based on the
+    specified market. If the ticker already has a suffix, it is returned
+    as-is.
 
     Args:
-        ticker: The base ticker symbol (e.g., "AAPL", "PETR4").
-        market: Market identifier (default: "US"). Must be one of the keys in MARKET_SUFFIXES.
+        ticker: The stock ticker symbol (e.g., "AAPL", "PETR4", "RELIANCE").
+        market: The market code (e.g., "US", "BR", "UK", "IN_NSE").
+                Defaults to "US".
 
     Returns:
-        Normalized ticker with market suffix if applicable.
+        The normalized ticker with appropriate suffix (e.g., "AAPL",
+        "PETR4.SA", "RELIANCE.NS").
+
+    Raises:
+        ValueError: If the market code is not supported.
 
     Examples:
         >>> normalize_ticker("AAPL", "US")
@@ -47,156 +56,201 @@ def normalize_ticker(ticker: str, market: str = "US") -> str:
         'PETR4.SA'
         >>> normalize_ticker("RELIANCE", "IN_NSE")
         'RELIANCE.NS'
+        >>> normalize_ticker("7203", "JP")
+        '7203.T'
     """
-    market = market.upper()
-    suffix = MARKET_SUFFIXES.get(market, "")
+    if market not in MARKET_SUFFIXES:
+        raise ValueError(
+            f"Unsupported market: {market}. "
+            f"Supported markets: {', '.join(MARKET_SUFFIXES.keys())}"
+        )
 
-    # If ticker already has the suffix, don't add it again
-    if suffix and not ticker.endswith(suffix):
-        return f"{ticker}{suffix}"
+    # If ticker already has a suffix (contains a dot), return as-is
+    if "." in ticker:
+        return ticker
 
-    return ticker
+    # Get the suffix for the market and append to ticker
+    suffix = MARKET_SUFFIXES[market]
+    return f"{ticker}{suffix}"
 
 
 def format_dataframe_dates(df: pd.DataFrame) -> pd.DataFrame:
     """Convert DataFrame datetime index to ISO format strings.
 
+    This function is useful for serializing DataFrames with datetime
+    indexes to JSON format.
+
     Args:
         df: DataFrame with datetime index.
 
     Returns:
-        DataFrame with index converted to ISO format strings.
+        DataFrame with datetime index converted to ISO format strings.
+
+    Examples:
+        >>> df = pd.DataFrame({'value': [1, 2]}, index=pd.date_range('2024-01-01', periods=2))
+        >>> formatted = format_dataframe_dates(df)
+        >>> print(formatted.index[0])
+        '2024-01-01T00:00:00'
     """
     if isinstance(df.index, pd.DatetimeIndex):
         df = df.copy()
-        df.index = df.index.strftime("%Y-%m-%d")
-
+        df.index = df.index.strftime("%Y-%m-%dT%H:%M:%S")
     return df
 
 
 def generate_cache_key(tool_name: str, **kwargs: Any) -> str:
-    """Generate a consistent cache key from tool name and parameters.
+    """Generate a consistent cache key for a tool call.
+
+    Creates a deterministic hash-based cache key from the tool name
+    and its parameters. This ensures consistent caching across calls
+    with the same parameters.
 
     Args:
-        tool_name: Name of the tool/function.
-        **kwargs: Tool parameters to include in the cache key.
+        tool_name: Name of the tool/function being called.
+        **kwargs: Parameters passed to the tool.
 
     Returns:
-        SHA-256 hash of the tool name and sorted parameters.
+        A cache key string in the format "tool_name:hash".
 
     Examples:
-        >>> generate_cache_key("get_stock_price", symbol="AAPL", date="2024-01-01")
-        'a1b2c3d4...'
+        >>> key1 = generate_cache_key("get_stock_info", symbol="AAPL")
+        >>> key2 = generate_cache_key("get_stock_info", symbol="AAPL")
+        >>> key1 == key2
+        True
     """
-    # Sort kwargs to ensure consistent key generation
-    sorted_params = json.dumps(kwargs, sort_keys=True)
-    key_string = f"{tool_name}:{sorted_params}"
-    return hashlib.sha256(key_string.encode()).hexdigest()
+    # Sort kwargs to ensure consistent ordering
+    sorted_params = sorted(kwargs.items())
+    params_str = str(sorted_params)
+
+    # Generate hash of parameters
+    params_hash = hashlib.md5(params_str.encode()).hexdigest()[:12]
+
+    return f"{tool_name}:{params_hash}"
 
 
-def parse_docstring(docstring: str) -> dict[str, str]:
-    """Extract parameter descriptions from a Google-style docstring.
+def parse_docstring(docstring: str) -> Dict[str, str]:
+    """Extract parameter descriptions from a function's docstring.
+
+    Parses Google-style docstrings to extract parameter names and
+    their descriptions.
 
     Args:
-        docstring: Function docstring in Google style.
+        docstring: The function's docstring.
 
     Returns:
         Dictionary mapping parameter names to their descriptions.
 
     Examples:
-        >>> parse_docstring("Get stock price.\\n\\nArgs:\\n    symbol: Ticker symbol.\\n")
-        {'symbol': 'Ticker symbol.'}
+        >>> doc = '''Get stock price.
+        ...
+        ... Args:
+        ...     symbol: The stock ticker symbol.
+        ...     date: The date to query.
+        ... '''
+        >>> params = parse_docstring(doc)
+        >>> params['symbol']
+        'The stock ticker symbol.'
     """
     if not docstring:
         return {}
 
-    params = {}
-    lines = docstring.split("\n")
-    in_args_section = False
-    current_param = None
+    param_descriptions = {}
 
-    for line in lines:
-        stripped = line.strip()
+    # Find the Args section
+    args_match = re.search(r"Args:(.*?)(?:\n\n|\n[A-Z]|\Z)", docstring, re.DOTALL)
+    if not args_match:
+        return param_descriptions
 
-        # Check if we're entering the Args section
-        if stripped == "Args:":
-            in_args_section = True
-            continue
+    args_section = args_match.group(1)
 
-        # Check if we're leaving the Args section
-        if in_args_section and stripped and not line.startswith(" "):
-            break
+    # Parse parameter lines (format: "param_name: description")
+    param_pattern = r"\s*(\w+):\s*(.+?)(?=\n\s*\w+:|\Z)"
+    for match in re.finditer(param_pattern, args_section, re.DOTALL):
+        param_name = match.group(1)
+        description = match.group(2).strip().replace("\n", " ")
+        param_descriptions[param_name] = description
 
-        # Parse parameter line
-        if in_args_section and ":" in stripped:
-            parts = stripped.split(":", 1)
-            param_name = parts[0].strip()
-            description = parts[1].strip() if len(parts) > 1 else ""
-            params[param_name] = description
-            current_param = param_name
-        elif in_args_section and current_param and stripped:
-            # Continuation of previous parameter description
-            params[current_param] += f" {stripped}"
-
-    return params
+    return param_descriptions
 
 
-def generate_tool_schema(func: Callable) -> dict[str, Any]:
-    """Auto-generate MCP Tool schema from function signature and docstring.
+def generate_tool_schema(func: Callable) -> Dict[str, Any]:
+    """Auto-generate MCP Tool schema from a function.
+
+    Inspects a function's signature and docstring to automatically
+    generate an MCP-compatible tool schema.
 
     Args:
-        func: Function to generate schema for.
+        func: The function to generate a schema for.
 
     Returns:
-        MCP tool schema dictionary with name, description, and parameters.
+        Dictionary containing the tool schema with name, description,
+        and input schema.
 
     Examples:
-        >>> def get_price(symbol: str) -> str:
-        ...     '''Get stock price. Args: symbol: Ticker symbol.'''
+        >>> def get_price(symbol: str, date: Optional[str] = None) -> str:
+        ...     '''Get stock price.
+        ...
+        ...     Args:
+        ...         symbol: Stock ticker symbol.
+        ...         date: Optional date.
+        ...     '''
         ...     pass
         >>> schema = generate_tool_schema(get_price)
         >>> schema['name']
         'get_price'
     """
-    import inspect
-
     # Get function signature
     sig = inspect.signature(func)
-    doc = inspect.getdoc(func) or ""
+    docstring = inspect.getdoc(func) or ""
 
-    # Extract description (first line/paragraph)
-    description_lines = []
-    for line in doc.split("\n"):
-        stripped = line.strip()
-        if stripped == "Args:" or stripped == "Returns:":
-            break
-        if stripped:
-            description_lines.append(stripped)
-
-    description = " ".join(description_lines) or func.__name__
+    # Extract main description (first paragraph)
+    description = docstring.split("\n\n")[0].strip()
 
     # Parse parameter descriptions
-    param_descriptions = parse_docstring(doc)
+    param_descriptions = parse_docstring(docstring)
 
-    # Build parameter schema
-    parameters = {}
+    # Build input schema
+    properties = {}
+    required = []
+
     for param_name, param in sig.parameters.items():
+        # Skip 'self' parameter
         if param_name == "self":
             continue
 
-        param_schema: dict[str, Any] = {
-            "type": "string",  # Default type
-            "description": param_descriptions.get(param_name, ""),
-        }
+        # Determine parameter type
+        param_type = "string"  # Default to string
+        if param.annotation != inspect.Parameter.empty:
+            annotation_str = str(param.annotation)
+            if "int" in annotation_str.lower():
+                param_type = "integer"
+            elif "bool" in annotation_str.lower():
+                param_type = "boolean"
+            elif "float" in annotation_str.lower():
+                param_type = "number"
 
-        # Add required flag if no default value
+        # Build parameter schema
+        param_schema: Dict[str, Any] = {"type": param_type}
+
+        # Add description if available
+        if param_name in param_descriptions:
+            param_schema["description"] = param_descriptions[param_name]
+
+        properties[param_name] = param_schema
+
+        # Add to required list if no default value
         if param.default == inspect.Parameter.empty:
-            param_schema["required"] = True
+            required.append(param_name)
 
-        parameters[param_name] = param_schema
-
-    return {
+    # Build complete schema
+    schema = {
         "name": func.__name__,
         "description": description,
-        "parameters": parameters,
+        "inputSchema": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        },
     }
+
+    return schema

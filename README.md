@@ -267,7 +267,7 @@ Get option chain for specific expiration date.
 
 ---
 
-### News & Analysis (3 tools)
+### News & Analysis (5 tools)
 
 #### 14. `get_news`
 Get recent news articles.
@@ -309,6 +309,46 @@ Get earnings announcement dates (past and future).
   "limit": 12
 }
 ```
+
+#### 17. `get_stock_splits`
+Get historical stock split data.
+
+**Input:**
+```json
+{
+  "symbol": "AAPL"
+}
+```
+
+**Output:**
+```json
+[
+  {
+    "date": "2020-08-31",
+    "ratio": 4.0
+  },
+  {
+    "date": "2014-06-09",
+    "ratio": 7.0
+  }
+]
+```
+
+#### 18. `get_analyst_price_targets`
+Get analyst price targets and estimates.
+
+**Input:**
+```json
+{
+  "symbol": "NVDA"
+}
+```
+
+**Output includes:**
+- Current price
+- Target mean, median, high, low
+- Number of analysts
+- Recommendation (buy/hold/sell)
 
 ---
 
