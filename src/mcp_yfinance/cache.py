@@ -51,11 +51,24 @@ class CacheManager:
         Args:
             db_path: Path to SQLite database. If None, uses default path
                     at ~/.mcp-yfinance/cache.db
+
+        Raises:
+            ValueError: If provided db_path is outside user home directory.
         """
         if db_path is None:
             cache_dir = Path.home() / ".mcp-yfinance"
             cache_dir.mkdir(parents=True, exist_ok=True)
             db_path = str(cache_dir / "cache.db")
+        else:
+            # Validate and normalize path to prevent path traversal attacks
+            db_path = str(Path(db_path).resolve())
+            # Ensure path is within user home directory
+            allowed_base = str(Path.home().resolve())
+            if not db_path.startswith(allowed_base):
+                raise ValueError(
+                    f"Cache database path must be within user home directory. "
+                    f"Got: {db_path}, Expected base: {allowed_base}"
+                )
 
         self.db_path = db_path
         self._lock = threading.Lock()
