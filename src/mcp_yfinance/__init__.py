@@ -22,6 +22,13 @@ Example:
 
 __version__ = "0.1.0"
 
-from .server import main
+# Lazy import of main to avoid requiring server dependencies during testing
+__all__ = ["main", "__version__"]
 
-__all__ = ["main"]
+
+def __getattr__(name):
+    """Lazy import for main function."""
+    if name == "main":
+        from .server import main
+        return main
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
