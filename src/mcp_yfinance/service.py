@@ -1,331 +1,255 @@
-"""Yahoo Finance service layer for MCP server.
+"""Yahoo Finance service layer for MCP integration.
 
-This module provides the YahooFinanceService class which implements
-all business logic for fetching stock market data from Yahoo Finance.
+This module provides the main YahooFinanceService class that wraps yfinance
+functionality and returns JSON-formatted data suitable for MCP tools.
 """
 
 import json
 from datetime import datetime
-from typing import Any
-import yfinance as yf
+from typing import Optional
+
 import pandas as pd
+import yfinance as yf
 from requests import Session
 
-from .models import PeriodType, IntervalType, FrequencyType
 from .exceptions import (
-    TickerNotFoundError,
-    YFinanceAPIError,
     DataNotAvailableError,
     InvalidParameterError,
+    TickerNotFoundError,
+    YFinanceAPIError,
 )
-from .utils import normalize_ticker, format_dataframe_dates, dataframe_to_json_string
+from .models import (
+    FrequencyType,
+    HolderInfoType,
+    IntervalType,
+    OptionChainType,
+    PeriodType,
+    RecommendationInfoType,
+)
+from .utils import format_dataframe_dates, normalize_ticker
 
 
 class YahooFinanceService:
     """Service class for interacting with Yahoo Finance API.
 
-    This class provides methods for fetching various types of financial data
-    including stock prices, company information, financial statements, and more.
-    All methods return JSON-formatted strings for easy consumption by MCP clients.
+    This class provides methods to fetch stock data, financial statements,
+    and other market information from Yahoo Finance.
 
     Attributes:
-        session: Optional requests Session for API calls
-        verify: Whether to verify SSL certificates
-        default_market: Default market code for ticker normalization (e.g., 'US', 'BR', 'UK')
+        session: Optional requests Session for connection pooling.
+        verify: Whether to verify SSL certificates.
+        default_market: Default market for ticker normalization.
     """
 
     def __init__(
         self,
-        session: Session | None = None,
+        session: Optional[Session] = None,
         verify: bool = True,
         default_market: str = "US",
-    ):
-        """Initialize YahooFinanceService.
+    ) -> None:
+        """Initialize the Yahoo Finance service.
 
         Args:
-            session: Optional requests Session for connection pooling
-            verify: Whether to verify SSL certificates (default: True)
-            default_market: Default market for ticker normalization (default: 'US')
+            session: Optional requests Session for connection pooling.
+            verify: Whether to verify SSL certificates (default: True).
+            default_market: Default market for ticker normalization (default: "US").
         """
         self.session = session
         self.verify = verify
         self.default_market = default_market
 
     def _get_ticker(self, symbol: str) -> yf.Ticker:
-        """Get a yfinance Ticker object with validation.
+        """Get a yfinance Ticker object for the given symbol.
 
         Args:
-            symbol: Stock ticker symbol (will be normalized)
+            symbol: Stock ticker symbol.
 
         Returns:
-            yfinance Ticker object
+            yfinance Ticker object.
 
         Raises:
-            TickerNotFoundError: If ticker is invalid or not found
+            TickerNotFoundError: If the ticker is invalid or not found.
         """
-        # Normalize ticker for the default market
-        normalized_symbol = normalize_ticker(symbol, self.default_market)
-
         try:
+            normalized_symbol = normalize_ticker(symbol, self.default_market)
             ticker = yf.Ticker(normalized_symbol, session=self.session)
 
-            # Validate ticker exists by checking if info is available
+            # Verify ticker exists by checking if info is available
             if not ticker.info or len(ticker.info) <= 1:
-                raise TickerNotFoundError(normalized_symbol)
+                raise TickerNotFoundError(symbol)
 
             return ticker
         except Exception as e:
             if isinstance(e, TickerNotFoundError):
                 raise
-            raise YFinanceAPIError(str(e), normalized_symbol)
+            raise YFinanceAPIError(str(e), symbol)
 
-    # ==================== PRICING & HISTORICAL DATA ====================
+    # ========== PRICING & HISTORICAL DATA (Methods 1-6) ==========
 
     def get_current_stock_price(self, symbol: str) -> str:
-        """Get the current stock price for a given ticker symbol.
+        """Get the current stock price for a given symbol.
 
         Args:
-            symbol: Stock ticker symbol (e.g., 'AAPL', 'PETR4' for BR market)
+            symbol: Stock ticker symbol (e.g., "AAPL", "PETR4").
 
         Returns:
-            JSON string containing current price information including:
-            - symbol: Ticker symbol
-            - price: Current price
-            - currency: Price currency
-            - market_time: Last market timestamp
-            - volume: Current volume
-            - market_cap: Market capitalization
+            JSON string with current price information.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If price data is not available
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_current_stock_price("AAPL")
-            >>> print(result)
-            {
-              "symbol": "AAPL",
-              "price": 234.56,
-              "currency": "USD",
-              ...
-            }
+            TickerNotFoundError: If the ticker is invalid.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
         try:
             info = ticker.info
+            current_price = info.get("currentPrice") or info.get("regularMarketPrice")
 
-            if "currentPrice" not in info and "regularMarketPrice" not in info:
-                raise DataNotAvailableError("Current price", symbol)
-
-            # Get price from available fields
-            price = info.get("currentPrice") or info.get("regularMarketPrice")
+            if current_price is None:
+                raise DataNotAvailableError("current price", symbol)
 
             result = {
                 "symbol": symbol,
-                "price": price,
-                "currency": info.get("currency", "USD"),
+                "price": current_price,
+                "currency": info.get("currency"),
                 "market_time": info.get("regularMarketTime"),
-                "volume": info.get("volume"),
-                "market_cap": info.get("marketCap"),
-                "previous_close": info.get("previousClose"),
-                "open": info.get("open"),
-                "day_high": info.get("dayHigh"),
-                "day_low": info.get("dayLow"),
             }
 
             return json.dumps(result, indent=2)
-
-        except DataNotAvailableError:
-            raise
         except Exception as e:
-            raise YFinanceAPIError(f"Failed to fetch current price: {str(e)}", symbol)
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
     def get_stock_price_by_date(self, symbol: str, date: str) -> str:
         """Get the stock price for a specific date.
 
         Args:
-            symbol: Stock ticker symbol
-            date: Date in ISO format (YYYY-MM-DD)
+            symbol: Stock ticker symbol.
+            date: Date in YYYY-MM-DD format.
 
         Returns:
-            JSON string containing price data for the specified date including:
-            - date: The requested date
-            - open: Opening price
-            - high: Highest price
-            - low: Lowest price
-            - close: Closing price
-            - volume: Trading volume
-            - adj_close: Adjusted closing price
+            JSON string with price data for the specified date.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If no data available for the date
-            InvalidParameterError: If date format is invalid
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_stock_price_by_date("AAPL", "2024-01-15")
-            >>> print(result)
-            {
-              "date": "2024-01-15",
-              "open": 150.00,
-              ...
-            }
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no data is available for the date.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
         try:
             # Validate date format
-            try:
-                target_date = pd.to_datetime(date)
-            except Exception:
-                raise InvalidParameterError(
-                    "date", date, ["ISO format: YYYY-MM-DD"]
-                )
+            datetime.strptime(date, "%Y-%m-%d")
 
-            # Fetch data for a range around the target date
-            # (to handle weekends/holidays)
-            start_date = target_date - pd.Timedelta(days=7)
-            end_date = target_date + pd.Timedelta(days=1)
-
-            hist = ticker.history(start=start_date, end=end_date, interval="1d")
+            # Get historical data for the specific date
+            hist = ticker.history(start=date, end=date, interval="1d")
 
             if hist.empty:
-                raise DataNotAvailableError(f"Price data for {date}", symbol)
+                raise DataNotAvailableError(f"price data for date {date}", symbol)
 
-            # Find the closest date
-            hist.index = pd.to_datetime(hist.index)
-            closest_idx = hist.index.get_indexer([target_date], method="nearest")[0]
-
-            if closest_idx < 0 or closest_idx >= len(hist):
-                raise DataNotAvailableError(f"Price data for {date}", symbol)
-
-            row = hist.iloc[closest_idx]
-            actual_date = hist.index[closest_idx]
-
+            # Convert to dictionary
+            row = hist.iloc[0]
             result = {
-                "date": actual_date.strftime("%Y-%m-%d"),
-                "requested_date": date,
+                "symbol": symbol,
+                "date": date,
                 "open": float(row["Open"]),
                 "high": float(row["High"]),
                 "low": float(row["Low"]),
                 "close": float(row["Close"]),
                 "volume": int(row["Volume"]),
-                "adj_close": float(row["Close"]),  # Adjusted close
             }
 
+            if "Adj Close" in row:
+                result["adj_close"] = float(row["Adj Close"])
+
             return json.dumps(result, indent=2)
-
-        except (DataNotAvailableError, InvalidParameterError):
-            raise
+        except ValueError as e:
+            raise InvalidParameterError("date", date, ["YYYY-MM-DD format"])
         except Exception as e:
-            raise YFinanceAPIError(
-                f"Failed to fetch price for date {date}: {str(e)}", symbol
-            )
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
-    def get_stock_price_date_range(
-        self, symbol: str, start_date: str, end_date: str
-    ) -> str:
+    def get_stock_price_date_range(self, symbol: str, start_date: str, end_date: str) -> str:
         """Get stock prices for a date range.
 
         Args:
-            symbol: Stock ticker symbol
-            start_date: Start date in ISO format (YYYY-MM-DD)
-            end_date: End date in ISO format (YYYY-MM-DD)
+            symbol: Stock ticker symbol.
+            start_date: Start date in YYYY-MM-DD format.
+            end_date: End date in YYYY-MM-DD format.
 
         Returns:
-            JSON string containing array of price data points, each with:
-            - date: Trading date
-            - open: Opening price
-            - high: Highest price
-            - low: Lowest price
-            - close: Closing price
-            - volume: Trading volume
-            - adj_close: Adjusted closing price
+            JSON string with price data for the date range.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If no data available for the range
-            InvalidParameterError: If date format is invalid
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_stock_price_date_range(
-            ...     "AAPL", "2024-01-01", "2024-01-31"
-            ... )
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no data is available for the range.
+            InvalidParameterError: If date format is invalid.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
         try:
             # Validate date formats
-            try:
-                pd.to_datetime(start_date)
-                pd.to_datetime(end_date)
-            except Exception:
-                raise InvalidParameterError(
-                    "date", f"{start_date} or {end_date}", ["ISO format: YYYY-MM-DD"]
-                )
+            datetime.strptime(start_date, "%Y-%m-%d")
+            datetime.strptime(end_date, "%Y-%m-%d")
 
             hist = ticker.history(start=start_date, end=end_date, interval="1d")
 
             if hist.empty:
-                raise DataNotAvailableError(
-                    f"Price data for range {start_date} to {end_date}", symbol
-                )
+                raise DataNotAvailableError(f"price data for range {start_date} to {end_date}", symbol)
 
-            # Convert to list of dictionaries
+            # Format dates in index
             hist = format_dataframe_dates(hist)
-            result = []
 
-            for date_str, row in hist.iterrows():
-                result.append(
-                    {
-                        "date": date_str,
-                        "open": float(row["Open"]),
-                        "high": float(row["High"]),
-                        "low": float(row["Low"]),
-                        "close": float(row["Close"]),
-                        "volume": int(row["Volume"]),
-                        "adj_close": float(row["Close"]),
-                    }
-                )
+            # Convert to list of records
+            data = []
+            for date, row in hist.iterrows():
+                record = {
+                    "date": str(date),
+                    "open": float(row["Open"]),
+                    "high": float(row["High"]),
+                    "low": float(row["Low"]),
+                    "close": float(row["Close"]),
+                    "volume": int(row["Volume"]),
+                }
+                if "Adj Close" in row:
+                    record["adj_close"] = float(row["Adj Close"])
+                data.append(record)
+
+            result = {
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+                "data": data,
+            }
 
             return json.dumps(result, indent=2)
-
-        except (DataNotAvailableError, InvalidParameterError):
-            raise
+        except ValueError as e:
+            raise InvalidParameterError("date", f"{start_date} or {end_date}", ["YYYY-MM-DD format"])
         except Exception as e:
-            raise YFinanceAPIError(
-                f"Failed to fetch price range: {str(e)}", symbol
-            )
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
     def get_historical_stock_prices(
         self, symbol: str, period: PeriodType = "1mo", interval: IntervalType = "1d"
     ) -> str:
-        """Get historical stock prices for a specified period and interval.
+        """Get historical stock prices for a given period and interval.
 
         Args:
-            symbol: Stock ticker symbol
-            period: Time period (e.g., '1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max')
-            interval: Data interval (e.g., '1m', '5m', '1h', '1d', '1wk', '1mo')
+            symbol: Stock ticker symbol.
+            period: Time period (e.g., "1mo", "1y", "max").
+            interval: Data interval (e.g., "1d", "1wk", "1mo").
 
         Returns:
-            JSON string containing array of historical price data points
+            JSON string with historical price data.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If no data available
-            InvalidParameterError: If period or interval is invalid
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_historical_stock_prices("AAPL", period="1mo", interval="1d")
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no data is available.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
@@ -333,251 +257,219 @@ class YahooFinanceService:
             hist = ticker.history(period=period, interval=interval)
 
             if hist.empty:
-                raise DataNotAvailableError(
-                    f"Historical data (period={period}, interval={interval})", symbol
-                )
+                raise DataNotAvailableError(f"historical data for period {period}", symbol)
 
-            # Convert to list of dictionaries
+            # Format dates in index
             hist = format_dataframe_dates(hist)
-            result = []
 
-            for date_str, row in hist.iterrows():
-                data_point = {
-                    "date": date_str,
+            # Convert to list of records
+            data = []
+            for date, row in hist.iterrows():
+                record = {
+                    "date": str(date),
                     "open": float(row["Open"]),
                     "high": float(row["High"]),
                     "low": float(row["Low"]),
                     "close": float(row["Close"]),
                     "volume": int(row["Volume"]),
                 }
+                if "Adj Close" in row:
+                    record["adj_close"] = float(row["Adj Close"])
+                data.append(record)
 
-                # Add optional fields if available
-                if "Dividends" in row:
-                    data_point["dividends"] = float(row["Dividends"])
-                if "Stock Splits" in row:
-                    data_point["stock_splits"] = float(row["Stock Splits"])
-
-                result.append(data_point)
+            result = {
+                "symbol": symbol,
+                "period": period,
+                "interval": interval,
+                "data": data,
+            }
 
             return json.dumps(result, indent=2)
-
-        except DataNotAvailableError:
-            raise
         except Exception as e:
-            raise YFinanceAPIError(
-                f"Failed to fetch historical prices: {str(e)}", symbol
-            )
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
     def get_dividends(self, symbol: str) -> str:
         """Get dividend history for a stock.
 
         Args:
-            symbol: Stock ticker symbol
+            symbol: Stock ticker symbol.
 
         Returns:
-            JSON string containing array of dividend payments, each with:
-            - date: Payment date
-            - amount: Dividend amount per share
+            JSON string with dividend history.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If no dividend data available
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_dividends("AAPL")
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no dividend data is available.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
         try:
             dividends = ticker.dividends
 
-            if dividends is None or dividends.empty:
-                raise DataNotAvailableError("Dividend data", symbol)
+            if dividends.empty:
+                raise DataNotAvailableError("dividend", symbol)
 
-            # Convert to list of dictionaries
-            result = []
-            for date, amount in dividends.items():
-                result.append(
-                    {
-                        "date": date.strftime("%Y-%m-%d"),
-                        "amount": float(amount),
-                    }
-                )
+            # Format dates
+            dividends_df = dividends.to_frame(name="amount")
+            dividends_df = format_dataframe_dates(dividends_df)
+
+            # Convert to list of records
+            data = [{"date": str(date), "amount": float(amount)} for date, amount in dividends_df.iterrows()]
+
+            result = {
+                "symbol": symbol,
+                "dividends": data,
+            }
 
             return json.dumps(result, indent=2)
-
-        except DataNotAvailableError:
-            raise
         except Exception as e:
-            raise YFinanceAPIError(f"Failed to fetch dividends: {str(e)}", symbol)
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
     def get_stock_actions(self, symbol: str) -> str:
-        """Get stock actions (splits, dividends) history.
+        """Get stock actions (splits and dividends) history.
 
         Args:
-            symbol: Stock ticker symbol
+            symbol: Stock ticker symbol.
 
         Returns:
-            JSON string containing array of stock actions with:
-            - date: Action date
-            - dividends: Dividend amount (if applicable)
-            - stock_splits: Split ratio (if applicable)
+            JSON string with stock actions history.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If no action data available
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_stock_actions("AAPL")
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no actions data is available.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
         try:
             actions = ticker.actions
 
-            if actions is None or actions.empty:
-                raise DataNotAvailableError("Stock actions data", symbol)
+            if actions.empty:
+                raise DataNotAvailableError("stock actions", symbol)
 
-            # Convert to list of dictionaries
-            result = []
+            # Format dates
+            actions = format_dataframe_dates(actions)
+
+            # Convert to list of records
+            data = []
             for date, row in actions.iterrows():
-                action = {"date": date.strftime("%Y-%m-%d")}
-
+                record = {"date": str(date)}
                 if "Dividends" in row and row["Dividends"] > 0:
-                    action["dividends"] = float(row["Dividends"])
-
+                    record["dividend"] = float(row["Dividends"])
                 if "Stock Splits" in row and row["Stock Splits"] > 0:
-                    action["stock_splits"] = float(row["Stock Splits"])
+                    record["stock_split"] = float(row["Stock Splits"])
+                data.append(record)
 
-                result.append(action)
+            result = {
+                "symbol": symbol,
+                "actions": data,
+            }
 
             return json.dumps(result, indent=2)
-
-        except DataNotAvailableError:
-            raise
         except Exception as e:
-            raise YFinanceAPIError(f"Failed to fetch stock actions: {str(e)}", symbol)
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
-    # ==================== COMPANY INFORMATION ====================
+    # ========== COMPANY INFO (Method 7) ==========
 
     def get_stock_info(self, symbol: str) -> str:
-        """Get comprehensive company and stock information.
+        """Get comprehensive stock information and metadata.
 
         Args:
-            symbol: Stock ticker symbol
+            symbol: Stock ticker symbol.
 
         Returns:
-            JSON string containing detailed company information including:
-            - Basic info: name, sector, industry, website
-            - Market data: market cap, price, volume
-            - Financial metrics: P/E ratio, dividend yield, etc.
-            - Company description and key statistics
+            JSON string with stock information.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_stock_info("AAPL")
+            TickerNotFoundError: If the ticker is invalid.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
         try:
             info = ticker.info
 
-            if not info or len(info) <= 1:
-                raise DataNotAvailableError("Stock information", symbol)
+            # Return the full info dictionary
+            result = {
+                "symbol": symbol,
+                "info": info,
+            }
 
-            # Return the full info dictionary as JSON
-            # Clean up any non-serializable values
-            clean_info = {}
-            for key, value in info.items():
-                try:
-                    json.dumps(value)  # Test if serializable
-                    clean_info[key] = value
-                except (TypeError, ValueError):
-                    clean_info[key] = str(value)
-
-            return json.dumps(clean_info, indent=2)
-
-        except DataNotAvailableError:
-            raise
+            return json.dumps(result, indent=2, default=str)
         except Exception as e:
-            raise YFinanceAPIError(f"Failed to fetch stock info: {str(e)}", symbol)
+            if isinstance(e, TickerNotFoundError):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
-    # ==================== FINANCIAL STATEMENTS ====================
+    # ========== FINANCIAL STATEMENTS (Methods 8-10) ==========
 
-    def get_income_statement(
-        self, symbol: str, freq: FrequencyType = "yearly"
-    ) -> str:
+    def get_income_statement(self, symbol: str, freq: FrequencyType = "yearly") -> str:
         """Get income statement for a stock.
 
         Args:
-            symbol: Stock ticker symbol
-            freq: Frequency - 'yearly' or 'quarterly' (default: 'yearly')
+            symbol: Stock ticker symbol.
+            freq: Frequency - "yearly" or "quarterly".
 
         Returns:
-            JSON string containing income statement data with rows as financial
-            line items and columns as time periods
+            JSON string with income statement data.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If income statement not available
-            InvalidParameterError: If frequency is invalid
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_income_statement("AAPL", freq="yearly")
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no income statement data is available.
+            InvalidParameterError: If frequency is invalid.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
         try:
             if freq == "yearly":
-                income_stmt = ticker.income_stmt
+                income_stmt = ticker.financials
             elif freq == "quarterly":
-                income_stmt = ticker.quarterly_income_stmt
+                income_stmt = ticker.quarterly_financials
             else:
                 raise InvalidParameterError("freq", freq, ["yearly", "quarterly"])
 
             if income_stmt is None or income_stmt.empty:
-                raise DataNotAvailableError(f"Income statement ({freq})", symbol)
+                raise DataNotAvailableError(f"{freq} income statement", symbol)
 
-            # Convert to JSON with proper date formatting
-            return dataframe_to_json_string(income_stmt.T, orient="index")
+            # Convert to JSON-serializable format
+            income_stmt = format_dataframe_dates(income_stmt.T)
+            data = income_stmt.to_dict(orient="index")
 
-        except (DataNotAvailableError, InvalidParameterError):
-            raise
+            result = {
+                "symbol": symbol,
+                "frequency": freq,
+                "income_statement": data,
+            }
+
+            return json.dumps(result, indent=2, default=str)
         except Exception as e:
-            raise YFinanceAPIError(
-                f"Failed to fetch income statement: {str(e)}", symbol
-            )
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
     def get_balance_sheet(self, symbol: str, freq: FrequencyType = "yearly") -> str:
         """Get balance sheet for a stock.
 
         Args:
-            symbol: Stock ticker symbol
-            freq: Frequency - 'yearly' or 'quarterly' (default: 'yearly')
+            symbol: Stock ticker symbol.
+            freq: Frequency - "yearly" or "quarterly".
 
         Returns:
-            JSON string containing balance sheet data with rows as financial
-            line items and columns as time periods
+            JSON string with balance sheet data.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If balance sheet not available
-            InvalidParameterError: If frequency is invalid
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_balance_sheet("AAPL", freq="yearly")
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no balance sheet data is available.
+            InvalidParameterError: If frequency is invalid.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
@@ -590,38 +482,39 @@ class YahooFinanceService:
                 raise InvalidParameterError("freq", freq, ["yearly", "quarterly"])
 
             if balance_sheet is None or balance_sheet.empty:
-                raise DataNotAvailableError(f"Balance sheet ({freq})", symbol)
+                raise DataNotAvailableError(f"{freq} balance sheet", symbol)
 
-            # Convert to JSON with proper date formatting
-            return dataframe_to_json_string(balance_sheet.T, orient="index")
+            # Convert to JSON-serializable format
+            balance_sheet = format_dataframe_dates(balance_sheet.T)
+            data = balance_sheet.to_dict(orient="index")
 
-        except (DataNotAvailableError, InvalidParameterError):
-            raise
+            result = {
+                "symbol": symbol,
+                "frequency": freq,
+                "balance_sheet": data,
+            }
+
+            return json.dumps(result, indent=2, default=str)
         except Exception as e:
-            raise YFinanceAPIError(
-                f"Failed to fetch balance sheet: {str(e)}", symbol
-            )
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
 
     def get_cashflow(self, symbol: str, freq: FrequencyType = "yearly") -> str:
         """Get cash flow statement for a stock.
 
         Args:
-            symbol: Stock ticker symbol
-            freq: Frequency - 'yearly' or 'quarterly' (default: 'yearly')
+            symbol: Stock ticker symbol.
+            freq: Frequency - "yearly" or "quarterly".
 
         Returns:
-            JSON string containing cash flow statement data with rows as
-            financial line items and columns as time periods
+            JSON string with cash flow data.
 
         Raises:
-            TickerNotFoundError: If ticker symbol is not found
-            YFinanceAPIError: If API request fails
-            DataNotAvailableError: If cash flow statement not available
-            InvalidParameterError: If frequency is invalid
-
-        Examples:
-            >>> service = YahooFinanceService()
-            >>> result = service.get_cashflow("AAPL", freq="yearly")
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no cash flow data is available.
+            InvalidParameterError: If frequency is invalid.
+            YFinanceAPIError: If the API request fails.
         """
         ticker = self._get_ticker(symbol)
 
@@ -634,14 +527,443 @@ class YahooFinanceService:
                 raise InvalidParameterError("freq", freq, ["yearly", "quarterly"])
 
             if cashflow is None or cashflow.empty:
-                raise DataNotAvailableError(f"Cash flow statement ({freq})", symbol)
+                raise DataNotAvailableError(f"{freq} cash flow", symbol)
 
-            # Convert to JSON with proper date formatting
-            return dataframe_to_json_string(cashflow.T, orient="index")
+            # Convert to JSON-serializable format
+            cashflow = format_dataframe_dates(cashflow.T)
+            data = cashflow.to_dict(orient="index")
 
-        except (DataNotAvailableError, InvalidParameterError):
-            raise
+            result = {
+                "symbol": symbol,
+                "frequency": freq,
+                "cashflow": data,
+            }
+
+            return json.dumps(result, indent=2, default=str)
         except Exception as e:
-            raise YFinanceAPIError(
-                f"Failed to fetch cash flow statement: {str(e)}", symbol
-            )
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    # ========== HOLDERS & OWNERSHIP (Method 11) ==========
+
+    def get_holder_info(self, symbol: str, holder_type: HolderInfoType) -> str:
+        """Get holder and ownership information for a stock.
+
+        Args:
+            symbol: Stock ticker symbol.
+            holder_type: Type of holder information to retrieve. Options:
+                - "major_holders": Major shareholders overview
+                - "institutional_holders": Institutional ownership details
+                - "mutualfund_holders": Mutual fund ownership details
+                - "insider_transactions": Insider trading activity
+                - "insider_purchases": Insider purchase transactions
+                - "insider_roster_holders": Current insider roster
+
+        Returns:
+            JSON string with holder information.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If holder data is not available.
+            InvalidParameterError: If holder_type is invalid.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            # Map holder_type to ticker attribute
+            holder_data = None
+
+            if holder_type == "major_holders":
+                holder_data = ticker.major_holders
+            elif holder_type == "institutional_holders":
+                holder_data = ticker.institutional_holders
+            elif holder_type == "mutualfund_holders":
+                holder_data = ticker.mutualfund_holders
+            elif holder_type == "insider_transactions":
+                holder_data = ticker.insider_transactions
+            elif holder_type == "insider_purchases":
+                holder_data = ticker.insider_purchases
+            elif holder_type == "insider_roster_holders":
+                holder_data = ticker.insider_roster_holders
+            else:
+                valid_types = [
+                    "major_holders",
+                    "institutional_holders",
+                    "mutualfund_holders",
+                    "insider_transactions",
+                    "insider_purchases",
+                    "insider_roster_holders",
+                ]
+                raise InvalidParameterError("holder_type", holder_type, valid_types)
+
+            if holder_data is None or (isinstance(holder_data, pd.DataFrame) and holder_data.empty):
+                raise DataNotAvailableError(f"{holder_type} data", symbol)
+
+            # Convert DataFrame to JSON-serializable format
+            if isinstance(holder_data, pd.DataFrame):
+                # Format dates if present in index or columns
+                holder_data = format_dataframe_dates(holder_data)
+
+                # Convert to dictionary
+                data = holder_data.to_dict(orient="records")
+            else:
+                data = holder_data
+
+            result = {
+                "symbol": symbol,
+                "holder_type": holder_type,
+                "data": data,
+            }
+
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    # ========== OPTIONS (Methods 12-13) ==========
+
+    def get_option_expiration_dates(self, symbol: str) -> str:
+        """Get available option expiration dates for a stock.
+
+        Args:
+            symbol: Stock ticker symbol.
+
+        Returns:
+            JSON string with list of expiration dates.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no options data is available.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            expiration_dates = ticker.options
+
+            if not expiration_dates:
+                raise DataNotAvailableError("option expiration dates", symbol)
+
+            result = {
+                "symbol": symbol,
+                "expiration_dates": list(expiration_dates),
+            }
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    def get_option_chain(
+        self, symbol: str, expiration_date: str, option_type: OptionChainType = "both"
+    ) -> str:
+        """Get option chain data for a specific expiration date.
+
+        Args:
+            symbol: Stock ticker symbol.
+            expiration_date: Option expiration date (YYYY-MM-DD format).
+            option_type: Type of options - "calls", "puts", or "both".
+
+        Returns:
+            JSON string with option chain data.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no options data is available.
+            InvalidParameterError: If option_type or expiration_date is invalid.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            # Verify expiration date exists
+            if expiration_date not in ticker.options:
+                raise InvalidParameterError("expiration_date", expiration_date, list(ticker.options))
+
+            # Get option chain
+            opt_chain = ticker.option_chain(expiration_date)
+
+            result = {
+                "symbol": symbol,
+                "expiration_date": expiration_date,
+                "option_type": option_type,
+            }
+
+            # Process based on option_type
+            if option_type == "calls":
+                if opt_chain.calls.empty:
+                    raise DataNotAvailableError("calls option chain", symbol)
+                result["calls"] = opt_chain.calls.to_dict(orient="records")
+            elif option_type == "puts":
+                if opt_chain.puts.empty:
+                    raise DataNotAvailableError("puts option chain", symbol)
+                result["puts"] = opt_chain.puts.to_dict(orient="records")
+            elif option_type == "both":
+                if opt_chain.calls.empty and opt_chain.puts.empty:
+                    raise DataNotAvailableError("option chain", symbol)
+                result["calls"] = opt_chain.calls.to_dict(orient="records") if not opt_chain.calls.empty else []
+                result["puts"] = opt_chain.puts.to_dict(orient="records") if not opt_chain.puts.empty else []
+            else:
+                raise InvalidParameterError("option_type", option_type, ["calls", "puts", "both"])
+
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    # ========== NEWS & ANALYSIS (Methods 14-16) ==========
+
+    def get_news(self, symbol: str) -> str:
+        """Get recent news articles for a stock.
+
+        Args:
+            symbol: Stock ticker symbol.
+
+        Returns:
+            JSON string with news articles.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no news data is available.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            news = ticker.news
+
+            if not news:
+                raise DataNotAvailableError("news", symbol)
+
+            # Format news data
+            formatted_news = []
+            for article in news:
+                formatted_article = {
+                    "title": article.get("title", ""),
+                    "publisher": article.get("publisher", ""),
+                    "link": article.get("link", ""),
+                }
+
+                # Handle timestamp conversion
+                if "providerPublishTime" in article:
+                    formatted_article["published_date"] = datetime.fromtimestamp(
+                        article["providerPublishTime"]
+                    ).isoformat()
+
+                # Add thumbnail if available
+                if "thumbnail" in article and article["thumbnail"]:
+                    resolutions = article["thumbnail"].get("resolutions", [])
+                    if resolutions:
+                        formatted_article["thumbnail"] = resolutions[0].get("url", "")
+
+                formatted_news.append(formatted_article)
+
+            result = {
+                "symbol": symbol,
+                "news": formatted_news,
+            }
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    def get_recommendations(
+        self,
+        symbol: str,
+        recommendation_type: RecommendationInfoType = "recommendations",
+        months_back: int = 12,
+    ) -> str:
+        """Get analyst recommendations for a stock.
+
+        Args:
+            symbol: Stock ticker symbol.
+            recommendation_type: Type of recommendations - "recommendations" or "upgrades_downgrades".
+            months_back: Number of months of historical recommendations to retrieve.
+
+        Returns:
+            JSON string with analyst recommendations.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no recommendations data is available.
+            InvalidParameterError: If recommendation_type is invalid.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            if recommendation_type == "recommendations":
+                recommendations = ticker.recommendations
+            elif recommendation_type == "upgrades_downgrades":
+                recommendations = ticker.upgrades_downgrades
+            else:
+                raise InvalidParameterError(
+                    "recommendation_type", recommendation_type, ["recommendations", "upgrades_downgrades"]
+                )
+
+            if recommendations is None or recommendations.empty:
+                raise DataNotAvailableError(f"{recommendation_type} data", symbol)
+
+            # Format dates in index
+            recommendations = format_dataframe_dates(recommendations)
+
+            # Filter by months_back if applicable
+            if months_back and isinstance(recommendations.index, pd.Index):
+                # Limit to requested number of records
+                recommendations = recommendations.tail(months_back * 4)  # Approximate weekly recommendations
+
+            # Convert to dictionary
+            data = recommendations.to_dict(orient="records")
+
+            result = {
+                "symbol": symbol,
+                "recommendation_type": recommendation_type,
+                "months_back": months_back,
+                "data": data,
+            }
+
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError, InvalidParameterError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    def get_earning_dates(self, symbol: str, limit: int = 12) -> str:
+        """Get upcoming and historical earnings dates for a stock.
+
+        Args:
+            symbol: Stock ticker symbol.
+            limit: Maximum number of earnings dates to retrieve.
+
+        Returns:
+            JSON string with earnings dates.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no earnings date data is available.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            earnings_dates = ticker.earnings_dates
+
+            if earnings_dates is None or earnings_dates.empty:
+                raise DataNotAvailableError("earnings dates", symbol)
+
+            # Format dates in index
+            earnings_dates = format_dataframe_dates(earnings_dates)
+
+            # Limit results
+            if limit:
+                earnings_dates = earnings_dates.head(limit)
+
+            # Convert to dictionary
+            data = earnings_dates.to_dict(orient="index")
+
+            result = {
+                "symbol": symbol,
+                "limit": limit,
+                "earnings_dates": data,
+            }
+
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    # ========== BONUS TOOLS (Methods 17-18) ==========
+
+    def get_stock_splits(self, symbol: str) -> str:
+        """Get stock split history for a stock.
+
+        Args:
+            symbol: Stock ticker symbol.
+
+        Returns:
+            JSON string with stock split history.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no stock split data is available.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            splits = ticker.splits
+
+            if splits.empty:
+                raise DataNotAvailableError("stock splits", symbol)
+
+            # Format dates
+            splits_df = splits.to_frame(name="split_ratio")
+            splits_df = format_dataframe_dates(splits_df)
+
+            # Convert to list of records
+            data = [{"date": str(date), "split_ratio": float(ratio)} for date, ratio in splits_df.iterrows()]
+
+            result = {
+                "symbol": symbol,
+                "splits": data,
+            }
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
+
+    def get_analyst_price_targets(self, symbol: str) -> str:
+        """Get analyst price targets and recommendations summary.
+
+        Args:
+            symbol: Stock ticker symbol.
+
+        Returns:
+            JSON string with analyst price targets.
+
+        Raises:
+            TickerNotFoundError: If the ticker is invalid.
+            DataNotAvailableError: If no analyst target data is available.
+            YFinanceAPIError: If the API request fails.
+        """
+        ticker = self._get_ticker(symbol)
+
+        try:
+            info = ticker.info
+
+            # Extract analyst price target information
+            price_targets = {
+                "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
+                "target_high_price": info.get("targetHighPrice"),
+                "target_low_price": info.get("targetLowPrice"),
+                "target_mean_price": info.get("targetMeanPrice"),
+                "target_median_price": info.get("targetMedianPrice"),
+                "recommendation_mean": info.get("recommendationMean"),
+                "recommendation_key": info.get("recommendationKey"),
+                "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),
+            }
+
+            # Check if any target data is available
+            if all(v is None for k, v in price_targets.items() if k != "current_price"):
+                raise DataNotAvailableError("analyst price targets", symbol)
+
+            result = {
+                "symbol": symbol,
+                "price_targets": price_targets,
+            }
+
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            if isinstance(e, (DataNotAvailableError, TickerNotFoundError)):
+                raise
+            raise YFinanceAPIError(str(e), symbol)
