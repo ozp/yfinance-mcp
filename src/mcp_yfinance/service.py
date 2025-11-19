@@ -5,7 +5,8 @@ functionality and returns JSON-formatted data suitable for MCP tools.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any
 
 import pandas as pd
 import yfinance as yf
@@ -26,6 +27,34 @@ from .models import (
     RecommendationInfoType,
 )
 from .utils import format_dataframe_dates, normalize_ticker
+
+
+def safe_float(value: Any) -> float | None:
+    """Convert value to float, handling NaN/None gracefully.
+
+    Args:
+        value: Value to convert to float.
+
+    Returns:
+        Float value or None if value is NaN/None.
+    """
+    if pd.isna(value):
+        return None
+    return float(value)
+
+
+def safe_int(value: Any) -> int | None:
+    """Convert value to int, handling NaN/None gracefully.
+
+    Args:
+        value: Value to convert to int.
+
+    Returns:
+        Int value or None if value is NaN/None.
+    """
+    if pd.isna(value):
+        return None
+    return int(value)
 
 
 class YahooFinanceService:
@@ -149,18 +178,18 @@ class YahooFinanceService:
 
             # Convert to dictionary
             row = hist.iloc[0]
-            result = {
+            result: dict[str, Any] = {
                 "symbol": symbol,
                 "date": date,
-                "open": float(row["Open"]),
-                "high": float(row["High"]),
-                "low": float(row["Low"]),
-                "close": float(row["Close"]),
-                "volume": int(row["Volume"]),
+                "open": safe_float(row["Open"]),
+                "high": safe_float(row["High"]),
+                "low": safe_float(row["Low"]),
+                "close": safe_float(row["Close"]),
+                "volume": safe_int(row["Volume"]),
             }
 
             if "Adj Close" in row:
-                result["adj_close"] = float(row["Adj Close"])
+                result["adj_close"] = safe_float(row["Adj Close"])
 
             return json.dumps(result, indent=2)
         except ValueError as e:
@@ -205,16 +234,16 @@ class YahooFinanceService:
             # Convert to list of records
             data = []
             for date, row in hist.iterrows():
-                record = {
+                record: dict[str, Any] = {
                     "date": str(date),
-                    "open": float(row["Open"]),
-                    "high": float(row["High"]),
-                    "low": float(row["Low"]),
-                    "close": float(row["Close"]),
-                    "volume": int(row["Volume"]),
+                    "open": safe_float(row["Open"]),
+                    "high": safe_float(row["High"]),
+                    "low": safe_float(row["Low"]),
+                    "close": safe_float(row["Close"]),
+                    "volume": safe_int(row["Volume"]),
                 }
                 if "Adj Close" in row:
-                    record["adj_close"] = float(row["Adj Close"])
+                    record["adj_close"] = safe_float(row["Adj Close"])
                 data.append(record)
 
             result = {
@@ -264,16 +293,16 @@ class YahooFinanceService:
             # Convert to list of records
             data = []
             for date, row in hist.iterrows():
-                record = {
+                record: dict[str, Any] = {
                     "date": str(date),
-                    "open": float(row["Open"]),
-                    "high": float(row["High"]),
-                    "low": float(row["Low"]),
-                    "close": float(row["Close"]),
-                    "volume": int(row["Volume"]),
+                    "open": safe_float(row["Open"]),
+                    "high": safe_float(row["High"]),
+                    "low": safe_float(row["Low"]),
+                    "close": safe_float(row["Close"]),
+                    "volume": safe_int(row["Volume"]),
                 }
                 if "Adj Close" in row:
-                    record["adj_close"] = float(row["Adj Close"])
+                    record["adj_close"] = safe_float(row["Adj Close"])
                 data.append(record)
 
             result = {
@@ -316,7 +345,7 @@ class YahooFinanceService:
             dividends_df = format_dataframe_dates(dividends_df)
 
             # Convert to list of records
-            data = [{"date": str(date), "amount": float(row["amount"])} for date, row in dividends_df.iterrows()]
+            data = [{"date": str(date), "amount": safe_float(row["amount"])} for date, row in dividends_df.iterrows()]
 
             result = {
                 "symbol": symbol,
@@ -357,11 +386,15 @@ class YahooFinanceService:
             # Convert to list of records
             data = []
             for date, row in actions.iterrows():
-                record = {"date": str(date)}
+                record: dict[str, Any] = {"date": str(date)}
                 if "Dividends" in row and row["Dividends"] > 0:
-                    record["dividend"] = float(row["Dividends"])
+                    dividend_val = safe_float(row["Dividends"])
+                    if dividend_val is not None:
+                        record["dividend"] = dividend_val
                 if "Stock Splits" in row and row["Stock Splits"] > 0:
-                    record["stock_split"] = float(row["Stock Splits"])
+                    split_val = safe_float(row["Stock Splits"])
+                    if split_val is not None:
+                        record["stock_split"] = split_val
                 data.append(record)
 
             result = {
@@ -686,7 +719,7 @@ class YahooFinanceService:
             # Get option chain
             opt_chain = ticker.option_chain(expiration_date)
 
-            result = {
+            result: dict[str, Any] = {
                 "symbol": symbol,
                 "expiration_date": expiration_date,
                 "option_type": option_type,
@@ -751,7 +784,7 @@ class YahooFinanceService:
                 # Handle timestamp conversion
                 if "providerPublishTime" in article:
                     formatted_article["published_date"] = datetime.fromtimestamp(
-                        article["providerPublishTime"]
+                        article["providerPublishTime"], tz=timezone.utc
                     ).isoformat()
 
                 # Add thumbnail if available
@@ -908,7 +941,7 @@ class YahooFinanceService:
             splits_df = format_dataframe_dates(splits_df)
 
             # Convert to list of records
-            data = [{"date": str(date), "split_ratio": float(row["split_ratio"])} for date, row in splits_df.iterrows()]
+            data = [{"date": str(date), "split_ratio": safe_float(row["split_ratio"])} for date, row in splits_df.iterrows()]
 
             result = {
                 "symbol": symbol,
