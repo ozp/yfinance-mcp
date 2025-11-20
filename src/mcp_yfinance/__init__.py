@@ -20,7 +20,7 @@ Example:
     $ YFINANCE_DEFAULT_MARKET=BR uvx mcp-yfinance
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Lazy import of main to avoid requiring server dependencies during testing
 __all__ = ["main", "__version__"]
