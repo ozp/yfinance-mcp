@@ -26,9 +26,13 @@ __version__ = "0.1.0"
 __all__ = ["main", "__version__"]
 
 
+def main():
+    """Entry point for the CLI."""
+    import asyncio
+    from .server import main as async_main
+    asyncio.run(async_main())
+
+
 def __getattr__(name):
-    """Lazy import for main function."""
-    if name == "main":
-        from .server import main
-        return main
+    """Lazy import for other attributes."""
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
