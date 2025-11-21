@@ -5,12 +5,15 @@ functionality and returns JSON-formatted data suitable for MCP tools.
 """
 
 import json
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
 import yfinance as yf
 from requests import Session
+
+logger = logging.getLogger(__name__)
 
 from .exceptions import (
     DataNotAvailableError,
@@ -168,19 +171,51 @@ class YahooFinanceService:
 
         try:
             # Validate date format
-            datetime.strptime(date, "%Y-%m-%d")
+            date_obj = datetime.strptime(date, "%Y-%m-%d")
 
-            # Get historical data for the specific date
-            hist = ticker.history(start=date, end=date, interval="1d")
+            # Try to get data for the specific date
+            # Add 1 day to end to create proper interval for Yahoo Finance API
+            end_date = (date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
+            hist = ticker.history(start=date, end=end_date, interval="1d")
 
+            # If no data found (e.g., weekend/holiday), search for last trading day
             if hist.empty:
-                raise DataNotAvailableError(f"price data for date {date}", symbol)
+                logger.warning(
+                    f"No data available for {symbol} on {date}, searching for previous trading day"
+                )
+
+                # Search up to 7 days back for the last trading day
+                start_search = (date_obj - timedelta(days=7)).strftime("%Y-%m-%d")
+                hist = ticker.history(start=start_search, end=end_date, interval="1d")
+
+                if hist.empty:
+                    raise DataNotAvailableError(f"price data for date {date}", symbol)
+
+                # Get the last available trading day before or on the requested date
+                hist = hist[hist.index.date <= date_obj.date()]
+
+                if hist.empty:
+                    raise DataNotAvailableError(
+                        f"price data for date {date} (no prior trading days found)",
+                        symbol,
+                    )
+
+                # Use the most recent trading day
+                hist = hist.tail(1)
+                actual_date = hist.index[0].strftime("%Y-%m-%d")
+
+                logger.info(
+                    f"Using data from {actual_date} (last trading day before {date}) for {symbol}"
+                )
+            else:
+                actual_date = hist.index[0].strftime("%Y-%m-%d")
 
             # Convert to dictionary
             row = hist.iloc[0]
             result: dict[str, Any] = {
                 "symbol": symbol,
-                "date": date,
+                "requested_date": date,
+                "actual_date": actual_date,
                 "open": safe_float(row["Open"]),
                 "high": safe_float(row["High"]),
                 "low": safe_float(row["Low"]),
@@ -772,13 +807,23 @@ class YahooFinanceService:
             if not news:
                 raise DataNotAvailableError("news", symbol)
 
-            # Format news data
+            # Format news data with validation
             formatted_news = []
+            skipped_count = 0
+
             for article in news:
+                # Validate required fields (title and link must exist and not be empty)
+                title = article.get("title", "").strip()
+                link = article.get("link", "").strip()
+
+                if not title or not link:
+                    skipped_count += 1
+                    continue  # Skip articles with incomplete data
+
                 formatted_article = {
-                    "title": article.get("title", ""),
-                    "publisher": article.get("publisher", ""),
-                    "link": article.get("link", ""),
+                    "title": title,
+                    "publisher": article.get("publisher", "Unknown"),
+                    "link": link,
                 }
 
                 # Handle timestamp conversion
@@ -794,6 +839,18 @@ class YahooFinanceService:
                         formatted_article["thumbnail"] = resolutions[0].get("url", "")
 
                 formatted_news.append(formatted_article)
+
+            # Log warning if articles were skipped
+            if skipped_count > 0:
+                logger.warning(
+                    f"Skipped {skipped_count} news article(s) with incomplete data for {symbol}"
+                )
+
+            # If no valid articles, log warning and return empty list
+            if not formatted_news:
+                logger.warning(
+                    f"No valid news articles available for {symbol} (all articles had incomplete data)"
+                )
 
             result = {
                 "symbol": symbol,
