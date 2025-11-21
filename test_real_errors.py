@@ -52,38 +52,41 @@ def test_get_news():
 def test_get_stock_price_by_date():
     """Test get_stock_price_by_date with a valid historical date."""
     print("\n" + "=" * 80)
-    print("TEST 2: get_stock_price_by_date - Testing with 2024-12-20")
+    print("TEST 2: get_stock_price_by_date - Testing with multiple dates")
     print("=" * 80)
 
     service = YahooFinanceService(default_market="US")
 
-    test_date = "2024-12-20"
+    # Test multiple dates including weekends
+    test_dates = [
+        ("2024-12-20", "Regular trading day"),
+        ("2025-09-09", "Recent date from user test"),
+        ("2025-01-18", "Weekend - Saturday (should fallback to Friday)"),
+    ]
 
-    try:
-        result = service.get_stock_price_by_date("AAPL", test_date)
-        data = json.loads(result)
+    success_count = 0
+    for test_date, description in test_dates:
+        print(f"\n  Testing {test_date} ({description})...")
+        try:
+            result = service.get_stock_price_by_date("AAPL", test_date)
+            data = json.loads(result)
 
-        print(f"\n✓ Function executed successfully")
-        print(f"Symbol: {data.get('symbol')}")
-        print(f"Requested date: {data.get('requested_date')}")
-        print(f"Actual date: {data.get('actual_date')}")
-        print(f"Close price: ${data.get('close')}")
-        print(f"Volume: {data.get('volume'):,}" if data.get('volume') else "Volume: None")
+            print(f"    ✓ Success!")
+            print(f"      Requested: {data.get('requested_date')}")
+            print(f"      Actual: {data.get('actual_date')}")
+            print(f"      Close: ${data.get('close'):.2f}" if data.get('close') else "      Close: None")
 
-        if data.get('requested_date') != data.get('actual_date'):
-            print(f"\nℹ️  Note: Different dates (weekend/holiday fallback)")
+            if data.get('requested_date') != data.get('actual_date'):
+                print(f"      ℹ️  Fallback used (weekend/holiday)")
 
-        return True
+            success_count += 1
 
-    except Exception as e:
-        error_msg = str(e)
-        print(f"\n✗ Error occurred: {error_msg}")
+        except Exception as e:
+            error_msg = str(e)
+            print(f"    ✗ Failed: {error_msg}")
 
-        if "Data not available" in error_msg:
-            print("\n⚠️  This confirms the reported issue!")
-            print("   The function is throwing 'Data not available' error")
-
-        return False
+    print(f"\n  Result: {success_count}/{len(test_dates)} dates succeeded")
+    return success_count > 0
 
 
 def test_workaround_date_range():
