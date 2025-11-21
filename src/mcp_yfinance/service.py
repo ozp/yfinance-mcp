@@ -85,6 +85,16 @@ class YahooFinanceService:
             verify: Whether to verify SSL certificates (default: True).
             default_market: Default market for ticker normalization (default: "US").
         """
+        # Create session with User-Agent if not provided
+        # This fixes the get_news issue where Yahoo Finance requires a valid User-Agent
+        if session is None:
+            session = Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                             'AppleWebKit/537.36 (KHTML, like Gecko) '
+                             'Chrome/124.0.0.0 Safari/537.36'
+            })
+
         self.session = session
         self.verify = verify
         self.default_market = default_market
@@ -192,7 +202,11 @@ class YahooFinanceService:
                     raise DataNotAvailableError(f"price data for date {date}", symbol)
 
                 # Get the last available trading day before or on the requested date
-                hist = hist[hist.index.date <= date_obj.date()]
+                # Convert index to normalized dates for comparison
+                hist_dates = pd.to_datetime(hist.index).normalize()
+                target_date = pd.Timestamp(date_obj).normalize()
+                mask = hist_dates <= target_date
+                hist = hist[mask]
 
                 if hist.empty:
                     raise DataNotAvailableError(
